@@ -430,7 +430,9 @@ class OutputsPage(BasePage):
         logical_w = pixel_w / monitor_scale
         logical_h = pixel_h / monitor_scale
 
-        # edge snapping
+        # edge snapping, only along the axis the pointer actually travelled
+        moved_x = dx != 0
+        moved_y = dy != 0
         SNAP_THRESHOLD = 30
         snapped_x = new_lx
         snapped_y = new_ly
@@ -476,16 +478,16 @@ class OutputsPage(BasePage):
             other_top = other_y
             other_bottom = other_y + other_logical_h
 
-            vertical_spans_are_near = not (
-                dragged_bottom < other_top - SNAP_THRESHOLD
-                or other_bottom + SNAP_THRESHOLD < dragged_top
+            vertical_overlap = max(
+                0, min(dragged_bottom, other_bottom) - max(dragged_top, other_top)
             )
-            horizontal_spans_are_near = not (
-                dragged_right < other_left - SNAP_THRESHOLD
-                or other_right + SNAP_THRESHOLD < dragged_left
+            vertical_spans_are_near = vertical_overlap > 0
+            horizontal_overlap = max(
+                0, min(dragged_right, other_right) - max(dragged_left, other_left)
             )
+            horizontal_spans_are_near = horizontal_overlap > 0
 
-            if vertical_spans_are_near:
+            if moved_x and vertical_spans_are_near:
                 for dragged_edge, is_left_edge in [
                     (dragged_left, True),
                     (dragged_right, False),
@@ -504,7 +506,7 @@ class OutputsPage(BasePage):
                                 is_other_left_edge,
                             )
 
-            if horizontal_spans_are_near:
+            if moved_y and horizontal_spans_are_near:
                 for dragged_edge, is_top_edge in [
                     (dragged_top, True),
                     (dragged_bottom, False),
