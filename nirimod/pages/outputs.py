@@ -18,6 +18,7 @@ from nirimod.kdl_parser import KdlNode, set_child_arg, safe_switch_connect
 from nirimod.output_layout import (
     cascade_positions,
     flush_links,
+    pack_rects,
     separate_overlaps,
 )
 from nirimod.pages.base import BasePage
@@ -619,8 +620,27 @@ class OutputsPage(BasePage):
         cascade_positions(rects, self._size_deltas, self._pending_links)
 
         repaired: dict[str, str] = {}
-        for name, _x, _y, other in separate_overlaps(rects, self._touch_order):
-            repaired[name] = other
+        packed: list[str] = []
+        seen: set[tuple[tuple[int, int], ...]] = set()
+        for _ in range(len(rects) * 2 + 4):
+            state = tuple((r["x"], r["y"]) for r in rects)
+            if state in seen:
+                break
+            seen.add(state)
+            for name, _x, _y, other in separate_overlaps(rects, self._touch_order):
+                repaired[name] = other
+            for name in pack_rects(rects):
+                if name not in packed:
+                    packed.append(name)
+            if tuple((r["x"], r["y"]) for r in rects) == state:
+                break
+
+        origin_x = min(r["x"] for r in rects)
+        origin_y = min(r["y"] for r in rects)
+        if origin_x or origin_y:
+            for r in rects:
+                r["x"] -= origin_x
+                r["y"] -= origin_y
 
         corrections: dict[str, tuple[int, int]] = {}
         for r in rects:
@@ -633,6 +653,9 @@ class OutputsPage(BasePage):
             pos["x"] = r["x"]
             pos["y"] = r["y"]
 
+        self._size_deltas.clear()
+        self._pending_links = None
+
         for name, (x, y) in corrections.items():
             out_node = self._get_or_create_out_node(name)
             pos_node = out_node.get_child("position")
@@ -641,9 +664,6 @@ class OutputsPage(BasePage):
                 out_node.children.append(pos_node)
             pos_node.props["x"] = int(x)
             pos_node.props["y"] = int(y)
-
-        self._size_deltas.clear()
-        self._pending_links = None
 
         if corrections and self._canvas:
             self._canvas.queue_draw()

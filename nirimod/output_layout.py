@@ -135,3 +135,30 @@ def separate_overlaps(
 
         moved[mover["name"]] = (mover["x"], mover["y"], other["name"])
     return [(n, x, y, o) for n, (x, y, o) in moved.items()]
+
+
+def pack_axis(rects: list[dict], axis: str) -> bool:
+    size = "w" if axis == "x" else "h"
+    perpendicular = v_overlap if axis == "x" else h_overlap
+    changed = False
+    for r in sorted(rects, key=lambda rect: rect[axis]):
+        edges = [
+            o[axis] + o[size]
+            for o in rects
+            if o is not r and perpendicular(o, r) and o[axis] + o[size] <= r[axis]
+        ]
+        if not edges:
+            continue
+        anchor = max(edges)
+        if r[axis] - anchor > 1:
+            r[axis] = anchor
+            changed = True
+    return changed
+
+
+def pack_rects(rects: list[dict]) -> list[str]:
+    before = {r["name"]: (r["x"], r["y"]) for r in rects}
+    for _ in range(len(rects) + 2):
+        if not (pack_axis(rects, "x") | pack_axis(rects, "y")):
+            break
+    return [r["name"] for r in rects if before[r["name"]] != (r["x"], r["y"])]
