@@ -15,7 +15,11 @@ from gi.repository import Adw, Gtk
 
 from nirimod import niri_ipc
 from nirimod.kdl_parser import KdlNode, set_child_arg, safe_switch_connect
-from nirimod.output_layout import separate_overlaps
+from nirimod.output_layout import (
+    cascade_positions,
+    flush_links,
+    separate_overlaps,
+)
 from nirimod.pages.base import BasePage
 
 if TYPE_CHECKING:
@@ -63,6 +67,10 @@ class OutputsPage(BasePage):
 
         self._touch_seq = 0
         self._touch_order: dict[str, int] = {}
+        self._size_deltas: dict[str, tuple[int, int]] = {}
+        self._pending_links: (
+            tuple[dict[str, list[str]], dict[str, list[str]]] | None
+        ) = None
         self._syncing_pos = False
 
     def build(self) -> Gtk.Widget:
@@ -604,7 +612,11 @@ class OutputsPage(BasePage):
     def _normalize_positions(self) -> list[str]:
         rects = self._desired_rects()
         if len(rects) < 2:
+            self._size_deltas.clear()
+            self._pending_links = None
             return []
+
+        cascade_positions(rects, self._size_deltas, self._pending_links)
 
         repaired: dict[str, str] = {}
         for name, _x, _y, other in separate_overlaps(rects, self._touch_order):
@@ -629,6 +641,9 @@ class OutputsPage(BasePage):
                 out_node.children.append(pos_node)
             pos_node.props["x"] = int(x)
             pos_node.props["y"] = int(y)
+
+        self._size_deltas.clear()
+        self._pending_links = None
 
         if corrections and self._canvas:
             self._canvas.queue_draw()
@@ -901,8 +916,24 @@ class OutputsPage(BasePage):
         if t_str in ["90", "270", "flipped-90", "flipped-270"]:
             pw, ph = ph, pw
 
-        o["logical"]["width"] = round(pw / scale)
-        o["logical"]["height"] = round(ph / scale)
+        old_w = o["logical"].get("width")
+        old_h = o["logical"].get("height")
+        new_w = round(pw / scale)
+        new_h = round(ph / scale)
+
+        if old_w is not None and (new_w != old_w or new_h != old_h):
+            if self._pending_links is None:
+                self._pending_links = flush_links(self._desired_rects())
+            name = o.get("name")
+            if isinstance(name, str):
+                prev_dw, prev_dh = self._size_deltas.get(name, (0, 0))
+                self._size_deltas[name] = (
+                    prev_dw + new_w - old_w,
+                    prev_dh + new_h - old_h,
+                )
+
+        o["logical"]["width"] = new_w
+        o["logical"]["height"] = new_h
 
     def _on_mode_changed(self, name: str, modes: list, idx: int):
         if not (0 <= idx < len(modes)):
