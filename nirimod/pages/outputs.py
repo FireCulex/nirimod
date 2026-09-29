@@ -16,8 +16,10 @@ from gi.repository import Adw, Gtk
 from nirimod import niri_ipc
 from nirimod.kdl_parser import KdlNode, set_child_arg, safe_switch_connect
 from nirimod.output_layout import (
+    attach_stray_clusters,
     cascade_positions,
     flush_links,
+    layout_is_sound,
     pack_rects,
     separate_overlaps,
 )
@@ -621,19 +623,29 @@ class OutputsPage(BasePage):
 
         repaired: dict[str, str] = {}
         packed: list[str] = []
+        stranded: list[str] = []
+        sound: list[tuple[int, int]] | None = None
         seen: set[tuple[tuple[int, int], ...]] = set()
         for _ in range(len(rects) * 2 + 4):
             state = tuple((r["x"], r["y"]) for r in rects)
             if state in seen:
                 break
             seen.add(state)
+            if layout_is_sound(rects):
+                sound = list(state)
             for name, _x, _y, other in separate_overlaps(rects, self._touch_order):
                 repaired[name] = other
             for name in pack_rects(rects):
                 if name not in packed:
                     packed.append(name)
+            for name in attach_stray_clusters(rects):
+                if name not in stranded:
+                    stranded.append(name)
             if tuple((r["x"], r["y"]) for r in rects) == state:
                 break
+        if sound is not None and not layout_is_sound(rects):
+            for r, (x, y) in zip(rects, sound):
+                r["x"], r["y"] = x, y
 
         origin_x = min(r["x"] for r in rects)
         origin_y = min(r["y"] for r in rects)

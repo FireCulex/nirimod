@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 
 def v_overlap(a: dict, b: dict) -> bool:
     return not (a["y"] + a["h"] <= b["y"] or b["y"] + b["h"] <= a["y"])
@@ -137,6 +139,85 @@ def separate_overlaps(
     return [(n, x, y, o) for n, (x, y, o) in moved.items()]
 
 
+def touches(a: dict, b: dict) -> bool:
+    return not (
+        a["x"] + a["w"] < b["x"]
+        or b["x"] + b["w"] < a["x"]
+        or a["y"] + a["h"] < b["y"]
+        or b["y"] + b["h"] < a["y"]
+    )
+
+
+def separation(a: dict, b: dict) -> float:
+    dx = max(b["x"] - (a["x"] + a["w"]), a["x"] - (b["x"] + b["w"]), 0)
+    dy = max(b["y"] - (a["y"] + a["h"]), a["y"] - (b["y"] + b["h"]), 0)
+    return math.hypot(dx, dy)
+
+
+def contact_shifts(a: dict, b: dict) -> list[tuple[int, int]]:
+    shifts = [
+        (b["x"] - a["w"] - a["x"], b["y"] - a["y"]),
+        (b["x"] + b["w"] - a["x"], b["y"] - a["y"]),
+        (b["x"] - a["x"], b["y"] - a["h"] - a["y"]),
+        (b["x"] - a["x"], b["y"] + b["h"] - a["y"]),
+        (b["x"] - a["w"] - a["x"], b["y"] - a["h"] - a["y"]),
+        (b["x"] + b["w"] - a["x"], b["y"] - a["h"] - a["y"]),
+        (b["x"] - a["w"] - a["x"], b["y"] + b["h"] - a["y"]),
+        (b["x"] + b["w"] - a["x"], b["y"] + b["h"] - a["y"]),
+    ]
+    if h_overlap(a, b):
+        shifts.append((0, b["y"] - (a["y"] + a["h"])))
+        shifts.append((0, b["y"] + b["h"] - a["y"]))
+    if v_overlap(a, b):
+        shifts.append((b["x"] - (a["x"] + a["w"]), 0))
+        shifts.append((b["x"] + b["w"] - a["x"], 0))
+    return shifts
+
+
+def adjacency_graph(rects: list[dict]) -> dict[str, set[str]]:
+    graph: dict[str, set[str]] = {r["name"]: set() for r in rects}
+    for i, a in enumerate(rects):
+        for b in rects[i + 1 :]:
+            if touches(a, b):
+                graph[a["name"]].add(b["name"])
+                graph[b["name"]].add(a["name"])
+    return graph
+
+
+def adjacency_clusters(rects: list[dict]) -> list[list[dict]]:
+    graph = adjacency_graph(rects)
+    by_name = {r["name"]: r for r in rects}
+    clusters: list[list[dict]] = []
+    seen: set[str] = set()
+    for start in rects:
+        if start["name"] in seen:
+            continue
+        cluster = [start]
+        seen.add(start["name"])
+        stack = [start]
+        while stack:
+            for other in graph[stack.pop()["name"]]:
+                if other in seen:
+                    continue
+                seen.add(other)
+                cluster.append(by_name[other])
+                stack.append(by_name[other])
+        clusters.append(cluster)
+    return clusters
+
+
+def shift_is_clear(cluster: list[dict], rects: list[dict], dx: int, dy: int) -> bool:
+    members = {id(r) for r in cluster}
+    for r in cluster:
+        moved = {**r, "x": r["x"] + dx, "y": r["y"] + dy}
+        for other in rects:
+            if id(other) in members:
+                continue
+            if overlaps(moved, other):
+                return False
+    return True
+
+
 def pack_axis(rects: list[dict], axis: str) -> bool:
     size = "w" if axis == "x" else "h"
     perpendicular = v_overlap if axis == "x" else h_overlap
@@ -162,3 +243,46 @@ def pack_rects(rects: list[dict]) -> list[str]:
         if not (pack_axis(rects, "x") | pack_axis(rects, "y")):
             break
     return [r["name"] for r in rects if before[r["name"]] != (r["x"], r["y"])]
+
+
+def layout_is_sound(rects: list[dict]) -> bool:
+    for i, a in enumerate(rects):
+        for b in rects[i + 1 :]:
+            if overlaps(a, b):
+                return False
+    return len(adjacency_clusters(rects)) == 1
+
+
+def attach_stray_clusters(rects: list[dict]) -> list[str]:
+    clusters = adjacency_clusters(rects)
+    if len(clusters) < 2:
+        return []
+
+    primary = max(clusters, key=len)
+    moved: list[str] = []
+    for cluster in clusters:
+        if cluster is primary:
+            continue
+        best: tuple[int, int, int] | None = None
+        fallback: tuple[int, int, int] | None = None
+        for a in cluster:
+            target = min(primary, key=lambda b: separation(a, b))
+            for dx, dy in contact_shifts(a, target):
+                cost = abs(dx) + abs(dy)
+                if fallback is None or cost < fallback[0]:
+                    fallback = (cost, dx, dy)
+                if shift_is_clear(cluster, rects, dx, dy) and (
+                    best is None or cost < best[0]
+                ):
+                    best = (cost, dx, dy)
+        if best is None:
+            best = fallback
+        if best is None or best[0] == 0:
+            primary.extend(cluster)
+            continue
+        for r in cluster:
+            r["x"] += best[1]
+            r["y"] += best[2]
+        primary.extend(cluster)
+        moved.extend(r["name"] for r in cluster)
+    return moved
